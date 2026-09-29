@@ -134,8 +134,9 @@ public class DataLoading
         foreach (var component in ZNetView.m_tempComponents)
         {
           AddDefaultValue(component.GetType().Name, prefab.name);
-          if (component is WearNTear wnt)
-            AddDefaultValue($"material_{wnt.m_materialType}", prefab.name);
+          if (component is Piece piece)
+            foreach (var requirement in piece.m_resources)
+              AddDefaultValue($"material_{requirement.m_resItem.gameObject.name}", prefab.name);
           if (component is ItemDrop item)
             AddDefaultValue($"itemtype_{item.m_itemData.m_shared.m_itemType}", prefab.name);
         }
