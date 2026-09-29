@@ -11,30 +11,18 @@ exists specifically to keep objects owned by the server instead of a client,
 feature that only works by also requiring client-side installation is
 against the grain of the mod — flag this to the human before proposing one.
 
-**Prefer lazy computation over eager, especially anything gated by
-`objects:`/`poke:` nearby scans.** A scan should only run the first time its
-result is actually read, cached after that — not run up front for every
-rule that merely declares `objects:`/`poke:`, whether or not a script reads
-`<objectcount>`/`<pokecount_X>` at all. Confirmed by Jere's own follow-up
-commit to our `<objectcount>` PR (`3f29f88`, 2026-09-29): our version
-computed the full nearby-object count in `PrefabManager.Handle` before the
-rule's own templates ever resolved; his rewrite deferred the same scan into
-a `objectCounts ??= objects == null ? [] : ObjectsFiltering.GetCounts(...)`
-getter, computed once on first read and cached, never touched if the script
-never asks. He applied the identical shape to a brand-new `<pokecount_X>`
-feature in the same commit. When adding a new function that depends on a
-nearby-object/poke-target scan, default to this lazy-getter shape rather
-than an eager pre-computation, unless there's a specific reason the result
-is needed unconditionally.
+**Cost review (lazy over eager, O(1) is not the enemy):** general principle
+and the cheap-vs-speculative distinction now live in the shared
+[mod-cleanup-and-cost-review.md](../../docs/agents/mod-cleanup-and-cost-review.md)
+(shared with `valheim-modding`) — read that before adding a new function
+that depends on a nearby-object/poke-target scan, or any patch with a
+per-call cost question.
 
-**This is about avoiding speculative O(n) work, not banning all per-call
-cost.** A cheap O(1) check that runs on every call (a single dictionary
-lookup, for example) is a different order of magnitude from an eager scan
-over every nearby object, and doesn't meaningfully violate the principle
-above. Confirmed while designing an RPC-failure diagnostic (2026-09-29,
-`.scratch/rpc-name-audit`): the human initially read the objectcount lesson
-as "avoid any per-call cost at all" and considered a more fragile
-zero-cost transpiler over a simple Harmony Postfix doing one
-`Dictionary.ContainsKey` per call — settled on the Postfix once the actual
-cost was named plainly. Don't over-apply "lazy" into rejecting trivially
-cheap always-on checks.
+EWP-specific example that principle came from: Jere's own follow-up commit
+to our `<objectcount>` PR (`3f29f88`, 2026-09-29) rewrote our eager
+`PrefabManager.Handle` scan into a
+`objectCounts ??= objects == null ? [] : ObjectsFiltering.GetCounts(...)`
+getter, computed once on first read and cached — applied the identical
+shape to a brand-new `<pokecount_X>` feature in the same commit. Default
+new nearby-scan functions to this lazy-getter shape, unless there's a
+specific reason the result is needed unconditionally.
