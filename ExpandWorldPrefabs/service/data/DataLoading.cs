@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Service;
+using UnityEngine;
 namespace Data;
 
 public class DataLoading
@@ -127,6 +128,7 @@ public class DataLoading
   {
     if (DefaultValueGroups.Count == 0)
     {
+      var realItems = new HashSet<GameObject>(ObjectDB.instance.m_items);
       foreach (var prefab in ZNetScene.instance.m_namedPrefabs.Values)
       {
         if (!prefab) continue;
@@ -136,7 +138,7 @@ public class DataLoading
           AddDefaultValue(component.GetType().Name, prefab.name);
           if (component is WearNTear wnt)
             AddDefaultValue($"material_{wnt.m_materialType}", prefab.name);
-          if (component is ItemDrop item)
+          if (component is ItemDrop item && realItems.Contains(prefab))
             AddDefaultValue($"itemtype_{item.m_itemData.m_shared.m_itemType}", prefab.name);
         }
       }
