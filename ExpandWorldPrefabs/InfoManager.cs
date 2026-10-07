@@ -54,6 +54,7 @@ public class InfoManager
     ChangeDatas.Clear();
     TimeDatas.Clear();
     RealTimeDatas.Clear();
+    RpcInfo.Clear();
   }
   public static void Add(Info info)
   {
@@ -108,6 +109,7 @@ public class InfoManager
     SupportAttach.Patch(EWP.Harmony, shouldSupportAttach);
     ServerSideData.Patch(EWP.Harmony, shouldServerSideData);
     ServerOwned.Patch(EWP.Harmony, shouldServerOwned);
+    HandleRpcFailure.Patch(EWP.Harmony, RpcInfo.HasAny);
 
     var requiredStates = GetRequiredStates();
     var requiredClientStates = GetRequiredClientStates();

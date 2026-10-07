@@ -18,6 +18,10 @@ public abstract class RpcInfo
   protected abstract ZDOID GetId(ZDO zdo);
   private static readonly HashSet<string> Types = ["int", "long", "float", "bool", "string", "vec", "quat", "hash", "hit", "enum_reason", "enum_message", "enum_trap", "zdo"];
   public static bool IsType(string line) => Types.Contains(Parse.Kvp(line).Key);
+  private static readonly Dictionary<int, string> HashToName = [];
+  public static bool HasAny => HashToName.Count > 0;
+  public static bool TryGetName(int hash, out string name) => HashToName.TryGetValue(hash, out name);
+  public static void Clear() => HashToName.Clear();
   private readonly int Hash;
   private readonly RpcTarget Target;
   private readonly IStringValue? TargetParameter;
@@ -37,7 +41,10 @@ public abstract class RpcInfo
   {
     Target = RpcTarget.Owner;
     if (lines.TryGetValue("name", out var name))
+    {
       Hash = name.GetStableHashCode();
+      HashToName[Hash] = name;
+    }
 
     if (lines.TryGetValue("source", out var source))
       SourceParameter = DataValue.String(source);

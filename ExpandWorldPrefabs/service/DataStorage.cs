@@ -39,6 +39,8 @@ public class DataStorage
     if (!Directory.Exists(Yaml.BaseDirectory))
       Directory.CreateDirectory(Yaml.BaseDirectory);
     var yaml = Yaml.SerializeData(Database);
+    // No watcher covers this file, so keep the first pre-write copy of each day.
+    Yaml.BackupFile(SavedDataFile, false);
     File.WriteAllText(SavedDataFile, yaml);
     // A failed write must remain dirty so the existing save loop retries.
     UnsavedChanges = false;

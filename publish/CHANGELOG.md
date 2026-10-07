@@ -1,3 +1,7 @@
+- v1.62
+  - Adds automatic backing up for ew_data.yaml file (was accidentally removed).
+  - Adds better warning for invalid RPC method lookups Thanks Zeall!
+
 - v1.61
   - Adds new function `objectcount` to return the number of objects matching a given filter. Thanks Zeall!
   - Fixes various issues related to inventory handling.
@@ -27,16 +31,3 @@
   - Adds support for "distance, angle, y" format for vectors (requires using deg or rad for angle).
   - Adds dynamic value support to `objectsLimit` and `bannedObjectsLimit`.
   - Fixes `pos` y coordinate offset not being applied when `snap` is true.
-
-- v1.57
-  - Adds field `self` to object filters.
-  - Adds field `removeDelay` to spawns to allow automatic removal of spawned objects.
-  - Adds new setting to allow processing custom prefab names even when server doesn't recognize them.
-  - Adds new function `globalkey` to get global key values.
-  - Adds support for putting data entries to script yaml files.
-  - Fixes server player broken by last update.
-  - Fixes `bannedGlobalKeys` not lower casing function replacements automatically.
-  - Fixes say commands happening twice when players are being created.
-  - Fixes function `key` returning global key instead of custom data value.
-  - Fixes `Object attaching` not working for temporary objects like status effects.
-  - Optimizes file reloading to only reload the changed file.
