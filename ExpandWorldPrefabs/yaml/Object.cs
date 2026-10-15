@@ -10,6 +10,7 @@ public class Object
 {
   private readonly IPrefabValue PrefabsValue;
   private readonly bool HasPrefabFilter;
+  private readonly IPrefabValue? ExcludedPrefabsValue;
   private readonly IFloatValue? MinDistanceValue;
   private readonly IFloatValue MaxDistanceValue;
   private readonly IFloatValue? MinHeightValue;
@@ -26,6 +27,8 @@ public class Object
 
     HasPrefabFilter = !string.IsNullOrWhiteSpace(data.prefab);
     PrefabsValue = DataValue.Prefab(data.prefab);
+    if (!string.IsNullOrWhiteSpace(data.excludePrefab))
+      ExcludedPrefabsValue = DataValue.Prefab(data.excludePrefab);
     if (data.minDistance != null)
       MinDistanceValue = DataValue.Float(data.minDistance);
     if (data.maxDistance != null)
@@ -56,8 +59,8 @@ public class Object
     }
     if (data.filters != null || data.bannedFilters != null)
       filters = new Filters(data.filters, data.bannedFilters, data.filterLimit);
-    else if (data.data != null)
-      filters = new Filters([data.data], null, data.filterLimit);
+    else if (data.data?.Name != null)
+      filters = new Filters([data.data.Name], null, data.filterLimit);
   }
   private float? MinDistance;
   public float MaxDistance;
@@ -92,6 +95,7 @@ public class Object
   {
     if (!IncludeSelf && zdo.m_uid == self) return false;
     if (HasPrefabFilter && PrefabsValue.Match(f, zdo.GetPrefab()) != true) return false;
+    if (ExcludedPrefabsValue?.Match(f, zdo.GetPrefab()) == true) return false;
     var d = Utils.DistanceXZ(CachedPosition, zdo.GetPosition());
     if (MinDistance != null && d < MinDistance) return false;
     if (d > MaxDistance) return false;
@@ -111,6 +115,8 @@ public class ObjectYaml
 {
   [DefaultValue("")]
   public string prefab = "";
+  [DefaultValue("")]
+  public string excludePrefab = "";
   [DefaultValue(null)]
   public string? maxDistance;
   [DefaultValue(null)]
@@ -124,7 +130,7 @@ public class ObjectYaml
   [DefaultValue(null)]
   public string? offset;
   [DefaultValue(null)]
-  public string? data;
+  public DataField? data;
   [DefaultValue(null)]
   public string[]? filters;
   [DefaultValue(null)]
@@ -150,7 +156,7 @@ public class ObjectYaml
         result.minDistance = distance.Min.ToString();
       result.maxDistance = distance.Max.ToString();
     }
-    if (split.Count > 2) result.data = split[2];
+    if (split.Count > 2) result.data = new DataField(split[2]);
     if (split.Count > 3) result.weight = split[3];
     if (split.Count > 4)
     {

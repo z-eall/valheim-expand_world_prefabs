@@ -59,7 +59,7 @@ Most fields are put on a single line. List values are separated by `,`.
       - Second parameter is the condition (single value, multiple values, range).
       - Uses server timezone.
     - `config`: When a setting declared with a `config` entry changes (see [config](config.md)).
-      - Parameters are the section, the key and the new value. Rule parameters filter by section and key, for example `type: config Bosses bossHealth`.
+      - Parameters are the section, the key and, new value and prefab of the setting. Rule parameters filter by section and key, for example `type: config Bosses bossHealth`.
       - Wildcards work, for example `config Bosses *`. The new value is available as `<par2>` and the prefab of the setting as `<par3>`.
       - Old value isn't provided.
       - Also triggers on external edits of the config file.
@@ -244,6 +244,8 @@ bannedFilters:
   - When using max, all objects must be searched.
 - objects: List of required nearby objects.
   - prefab: Target object id or value group.
+  - excludePrefab: List of excluded object ids.
+    - This can be used to skip specific objects when a wildcard or component is used in the `prefab` field.
   - self: When set to true, the object itself is included in the search.
   - minDistance: Minimum distance to the object.
   - maxDistance: Maximum distance to the object. Default is 100 meters.
@@ -292,9 +294,10 @@ See object filtering [examples](examples_object_filtering.md).
 - logFile: Comma-separated destination names, inherited by log items unless explicitly replaced. Message text is resolved once for all copies.
   - Names are lowercased and use 1–64 ASCII letters, numbers, underscores or hyphens; EWP adds `.txt`.
   - Duplicate destinations are removed. Paths, extensions and reserved device names are rejected.
-- data: Sets object data either with format `name` or `type, key, value`.
-  - Format `name` can be used to set multiple values (entry name from `data.yaml`).
-  - Format `type, key, value` is a shorthand to set a single data value.
+- data: Sets object data.
+  - Three possible formats: `name` of existing data entry, full data entry or shorthand `type, key, value`.
+  - Existing data entry can be in any file.
+  - Shorthand can only be used to set a single value.
   - If a component field is set, the object is respawned to apply the changes.
   - Otherwise the data is force pushed to clients, which can override local changes (such as creature movement).
 - injectData: If set, overrides the default logic for data changes.
@@ -305,8 +308,9 @@ See object filtering [examples](examples_object_filtering.md).
   - These include creature drops, destructible drops and structure materials.
   - This can also be a data entry with `items` information.
   - Not supported for type `destroy`.
-- exec: Runs functions with side effects.
-  - Mostly useful for saving custom data with the `save` function.
+- exec: Runs functions or console commands.
+  - Functions only make sense if they have side effects like saving data.
+  - Can be a single line or a list of [execs](#execs).
 - owner: Changes the object owner (number).
   - Only works when using `injectData: true`.
   - Number 0 removes the owner, but the server will reassign it after a few seconds.
@@ -331,8 +335,10 @@ See object filtering [examples](examples_object_filtering.md).
 - spawn: Spawns another object.
   - prefab: Object id or value group.
   - condition: Optional condition expression. Must evaluate to true for this spawn attempt.
-  - data: Entry in the `data.yaml` to be used as initial data.
-    - Supports `type, key, value` format to set a single data value.
+  - data: Sets initial data.
+    - Three possible formats: `name` of existing data entry, full data entry or shorthand `type, key, value`.
+    - Existing data entry can be in any file.
+    - Shorthand can only be used to set a single value.
   - pos: Position offset in `x, z, y` from the original object.
     - Polar format `distance, angle, y` is supported when angle ends with `deg` or `rad`.
   - snap: If true, the spawned object is snapped to the original terrain height.
@@ -369,6 +375,8 @@ Poking allows to trigger actions on other objects (or even on the original objec
 - poke: List of poke objects:
   - prefab: Target object id or value group.
     - By default, the object itself can't be poked. You can set `self` to true allow self poking.
+  - excludePrefab: List of excluded object ids.
+    - This can be used to skip specific objects when a wildcard or component is used in the `prefab` field.
   - self: When set to true, the object itself can be poked.
     - If prefab is set, then other filters must apply as usual.
     - If prefab is not set, then the object itself is always poked.
@@ -403,9 +411,27 @@ Poking allows to trigger actions on other objects (or even on the original objec
     - Global triggers don't have any object, so the distance is from the world center (0,0,0).
   - minHeight: Minimum height difference from the poker.
   - maxHeight: Maximum height difference from the poker.
+  - condition: Optional condition expression. Must evaluate to true for the object.
   - position: Absolute position in x,z,y to override the original object position.
   - offset: Position offset in x,z,y from the original object position and rotation.
   - Data filters like `filter`, `filters`, `bannedFilter` and `bannedFilters` can be used to filter the affected objects.
+
+### Execs
+
+Execs allow running functions and console commands from a rule.
+
+- exec: List of exec entries. Text starting with `<` is a function, otherwise it is a console command.
+  - function: Function to run. For example `<save_X_Y>` saves custom data with key X and value Y.
+  - command: Console command to run. Runs after the function of the same entry.
+  - condition: Optional condition expression. Must evaluate to true for this exec attempt.
+  - chance (default: `1`): Chance to run.
+  - weight (optional): When set, only one of the weighted execs is selected.
+    - All weights are summed and the probability is `weight / sum`.
+    - Sum is at least 1, so with low weights there is a chance to not run anything.
+  - delay: Delay in seconds.
+  - repeat (default: `0`): How many times the exec is repeated.
+  - repeatInterval (default: `0`): Interval in seconds between repeats.
+  - repeatChance (default: `1`): Chance to run for each attempt (including the original).
 
 ### RPCs
 
