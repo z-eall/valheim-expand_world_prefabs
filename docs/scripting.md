@@ -189,6 +189,8 @@ filter: bool, boss, true
 filter: int, level, 2;3
 # Pet name must contain "(S)".
 filter: string, TamedName, *(S)*
+# Creature must hold a sword.
+filter: hash, RightItem, Sword*
 # This data entry must NOT match.
 bannedFilter: hasTakenDamage
 # Creature must NOT be named "Piggy".
@@ -397,7 +399,7 @@ Poking allows to trigger actions on other objects (or even on the original objec
     - All weights are summed and the probability is `weight / sum`.
     - Sum is at least 1, so with low weights there is a chance to not poke anything.
   - delay: Delay in seconds for poking.
-    - When server side data is enabled, the pending poke is saved to the object's server-side data.
+    - For persistent objects, the pending poke is saved to the object's server-side data.
     - This allows the poke to trigger even after restarting the server.
     - Note: This doesn't work if parameters include object ids, because after restart the ids are regenerated.
   - repeat (default: `0`): How many times the poke is repeated.
