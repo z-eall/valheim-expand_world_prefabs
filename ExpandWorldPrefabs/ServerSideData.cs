@@ -20,6 +20,8 @@ public static class ServerSideData
   private static readonly Dictionary<ZDOID, Dictionary<int, byte[]>> Bytes = [];
 
   private static readonly int StorageHash = ZdoHelper.Hash("_ewp_serverdata");
+  // Built on the main thread before the save thread starts; the save thread only reads it.
+  private static Dictionary<ZDOID, byte[]>? SavePayloads;
 
   private const int CurrentVersion = 1;
   private const ushort VersionShift = 12;
@@ -56,10 +58,18 @@ public static class ServerSideData
     var loadPostfix = AccessTools.Method(typeof(ServerSideData), nameof(AfterLoad));
     harmony.Patch(loadMethod, postfix: new HarmonyMethod(loadPostfix));
 
-    var saveMethod = AccessTools.Method(typeof(ZDO), nameof(ZDO.Save));
-    var savePrefix = AccessTools.Method(typeof(ServerSideData), nameof(BeforeSave));
-    var savePostfix = AccessTools.Method(typeof(ServerSideData), nameof(AfterSave));
-    harmony.Patch(saveMethod, prefix: new HarmonyMethod(savePrefix), postfix: new HarmonyMethod(savePostfix));
+    var prepareMethod = AccessTools.Method(typeof(ZDOMan), nameof(ZDOMan.PrepareSave));
+    var preparePrefix = AccessTools.Method(typeof(ServerSideData), nameof(BeforePrepareSave));
+    harmony.Patch(prepareMethod, prefix: new HarmonyMethod(preparePrefix));
+
+    // Modify only the save result; the live ZDO and its ExtraData stay untouched.
+    var getSaveDataMethod = AccessTools.Method(typeof(ZDOExtraData), nameof(ZDOExtraData.GetSaveData));
+    var saveDataPostfix = AccessTools.Method(typeof(ServerSideData), nameof(AfterGetSaveData));
+    harmony.Patch(getSaveDataMethod, postfix: new HarmonyMethod(saveDataPostfix));
+
+    var cleanupMethod = AccessTools.Method(typeof(ZDOMan), nameof(ZDOMan.SaveCleanup));
+    var cleanupPostfix = AccessTools.Method(typeof(ServerSideData), nameof(AfterSaveCleanup));
+    harmony.Patch(cleanupMethod, postfix: new HarmonyMethod(cleanupPostfix));
 
     var destroyMethod = AccessTools.Method(typeof(ZDOMan), nameof(ZDOMan.HandleDestroyedZDO), [typeof(ZDOID)]);
     var destroyPostfix = AccessTools.Method(typeof(ServerSideData), nameof(AfterDestroyed));
@@ -68,20 +78,29 @@ public static class ServerSideData
 
   private static void DoUnpatch(Harmony harmony)
   {
+    // Unpatching mid-save would drop data.
+    // This should never happen but better safe than sorry.
+    if (ZNet.instance != null)
+      ZNet.instance.m_saveThread?.Join();
     IsPatched = false;
     var loadMethod = AccessTools.Method(typeof(ZDO), nameof(ZDO.Load));
     var loadPostfix = AccessTools.Method(typeof(ServerSideData), nameof(AfterLoad));
-    var saveMethod = AccessTools.Method(typeof(ZDO), nameof(ZDO.Save));
-    var savePrefix = AccessTools.Method(typeof(ServerSideData), nameof(BeforeSave));
-    var savePostfix = AccessTools.Method(typeof(ServerSideData), nameof(AfterSave));
+    var prepareMethod = AccessTools.Method(typeof(ZDOMan), nameof(ZDOMan.PrepareSave));
+    var preparePrefix = AccessTools.Method(typeof(ServerSideData), nameof(BeforePrepareSave));
+    var getSaveDataMethod = AccessTools.Method(typeof(ZDOExtraData), nameof(ZDOExtraData.GetSaveData));
+    var saveDataPostfix = AccessTools.Method(typeof(ServerSideData), nameof(AfterGetSaveData));
+    var cleanupMethod = AccessTools.Method(typeof(ZDOMan), nameof(ZDOMan.SaveCleanup));
+    var cleanupPostfix = AccessTools.Method(typeof(ServerSideData), nameof(AfterSaveCleanup));
     var destroyMethod = AccessTools.Method(typeof(ZDOMan), nameof(ZDOMan.HandleDestroyedZDO), [typeof(ZDOID)]);
     var destroyPostfix = AccessTools.Method(typeof(ServerSideData), nameof(AfterDestroyed));
 
     harmony.Unpatch(loadMethod, loadPostfix);
-    harmony.Unpatch(saveMethod, savePrefix);
-    harmony.Unpatch(saveMethod, savePostfix);
+    harmony.Unpatch(prepareMethod, preparePrefix);
+    harmony.Unpatch(getSaveDataMethod, saveDataPostfix);
+    harmony.Unpatch(cleanupMethod, cleanupPostfix);
     harmony.Unpatch(destroyMethod, destroyPostfix);
 
+    SavePayloads = null;
     ClearAll();
   }
 
@@ -90,20 +109,83 @@ public static class ServerSideData
     Deserialize(__instance);
   }
 
-  private static void BeforeSave(ZDO __instance)
+  // Valheim uses snapshot too, so match that logic.
+  private static void BeforePrepareSave(ZDOMan __instance)
   {
-    var payload = Serialize(__instance.m_uid);
-    if (payload == null || payload.Length == 0)
+    var dirtyChunks = __instance.m_dirtyChunks[0];
+    var dirtyPortals = __instance.DirtyPortalObjects;
+    var portalHashes = Game.instance.PortalPrefabHash;
+    SavePayloads = BuildSaveSnapshot(id =>
     {
-      RemovePayloadFromZdo(__instance);
-      return;
-    }
-    __instance.Set(StorageHash, payload);
+      var zdo = __instance.GetZDO(id);
+      return zdo != null && zdo.Persistent && WillBeSaved(zdo, dirtyChunks, dirtyPortals, portalHashes);
+    });
   }
 
-  private static void AfterSave(ZDO __instance)
+  internal static Dictionary<ZDOID, byte[]> BuildSaveSnapshot(Func<ZDOID, bool> include)
   {
-    RemovePayloadFromZdo(__instance);
+    HashSet<ZDOID> ids = [
+      .. Strings.Keys, .. Floats.Keys, .. Ints.Keys, .. Longs.Keys,
+      .. Vecs.Keys, .. Quats.Keys, .. Bytes.Keys
+    ];
+
+    Dictionary<ZDOID, byte[]> snapshot = [];
+    foreach (var id in ids)
+    {
+      if (!include(id))
+        continue;
+      var payload = Serialize(id);
+      if (payload != null && payload.Length > 0)
+        snapshot.Add(id, payload);
+    }
+    return snapshot;
+  }
+
+  // Mirrors ZDOMan.GetSaveClonePerChunk which only writes dirty chunks (at any merged chunk size).
+  private static bool WillBeSaved(ZDO zdo, HashSet<ZoneSystem.ChunkIndex> dirtyChunks, bool dirtyPortals, List<int> portalHashes)
+  {
+    if (portalHashes.Contains(zdo.GetPrefab()))
+      return dirtyPortals;
+    var chunk = ZoneSystem.GetZonesChunk(zdo.GetSectorIndex());
+    if (dirtyChunks.Contains(chunk))
+      return true;
+    for (byte size = 1; size <= 3; size++)
+    {
+      chunk = ZoneSystem.ChunkIndexFromIndexAndSize(chunk, size);
+      if (dirtyChunks.Contains(chunk))
+        return true;
+    }
+    return false;
+  }
+
+  private static void AfterSaveCleanup()
+  {
+    SavePayloads = null;
+  }
+
+  private static void AfterGetSaveData(ZDOID zid, ref List<KeyValuePair<int, byte[]>> byteArray)
+  {
+    var snapshot = SavePayloads;
+    if (snapshot != null)
+      AddSavePayload(snapshot, zid, ref byteArray);
+  }
+
+  internal static void AddSavePayload(Dictionary<ZDOID, byte[]> snapshot, ZDOID id,
+    ref List<KeyValuePair<int, byte[]>> byteArrays)
+  {
+    if (!snapshot.TryGetValue(id, out var payload))
+      return;
+
+    byteArrays ??= [];
+    for (var i = 0; i < byteArrays.Count; i++)
+    {
+      if (byteArrays[i].Key == StorageHash)
+      {
+        byteArrays[i] = new KeyValuePair<int, byte[]>(StorageHash, payload);
+        return;
+      }
+    }
+    byteArrays.Add(new KeyValuePair<int, byte[]>(StorageHash, payload));
   }
 
   private static void AfterDestroyed(ZDOID uid)
@@ -253,65 +335,65 @@ public static class ServerSideData
 
   public static void SetString(ZDO zdo, int key, string value)
   {
-    Set(Strings, zdo.m_uid, key, value);
+    Set(Strings, zdo, key, value);
   }
   public static void SetFloat(ZDO zdo, int key, float value)
   {
-    Set(Floats, zdo.m_uid, key, value);
+    Set(Floats, zdo, key, value);
   }
   public static void SetInt(ZDO zdo, int key, int value)
   {
-    Set(Ints, zdo.m_uid, key, value);
+    Set(Ints, zdo, key, value);
   }
   public static void SetLong(ZDO zdo, int key, long value)
   {
-    Set(Longs, zdo.m_uid, key, value);
+    Set(Longs, zdo, key, value);
   }
   public static void SetVec(ZDO zdo, int key, Vector3 value)
   {
-    Set(Vecs, zdo.m_uid, key, value);
+    Set(Vecs, zdo, key, value);
   }
   public static void SetQuaternion(ZDO zdo, int key, Quaternion value)
   {
-    Set(Quats, zdo.m_uid, key, value);
+    Set(Quats, zdo, key, value);
   }
   public static void SetBytes(ZDO zdo, int key, byte[] value)
   {
-    Set(Bytes, zdo.m_uid, key, value);
+    Set(Bytes, zdo, key, value);
   }
   public static void RemoveString(ZDO zdo, int key)
   {
-    RemoveFromStore(Strings, zdo.m_uid, key);
+    RemoveFromStore(Strings, zdo, key);
     ZDOExtraData.s_strings.Remove(zdo.m_uid, key);
   }
   public static void RemoveFloat(ZDO zdo, int key)
   {
-    RemoveFromStore(Floats, zdo.m_uid, key);
+    RemoveFromStore(Floats, zdo, key);
     zdo.RemoveFloat(key);
   }
   public static void RemoveInt(ZDO zdo, int key)
   {
-    RemoveFromStore(Ints, zdo.m_uid, key);
+    RemoveFromStore(Ints, zdo, key);
     zdo.RemoveInt(key);
   }
   public static void RemoveLong(ZDO zdo, int key)
   {
-    RemoveFromStore(Longs, zdo.m_uid, key);
+    RemoveFromStore(Longs, zdo, key);
     zdo.RemoveLong(key);
   }
   public static void RemoveVec(ZDO zdo, int key)
   {
-    RemoveFromStore(Vecs, zdo.m_uid, key);
+    RemoveFromStore(Vecs, zdo, key);
     zdo.RemoveVec3(key);
   }
   public static void RemoveQuaternion(ZDO zdo, int key)
   {
-    RemoveFromStore(Quats, zdo.m_uid, key);
+    RemoveFromStore(Quats, zdo, key);
     zdo.RemoveQuaternion(key);
   }
   public static void RemoveBytes(ZDO zdo, int key)
   {
-    RemoveFromStore(Bytes, zdo.m_uid, key);
+    RemoveFromStore(Bytes, zdo, key);
     ZDOExtraData.s_byteArrays.Remove(zdo.m_uid, key);
   }
   public static void CleanSyncedData(ZDO zdo)
@@ -341,14 +423,40 @@ public static class ServerSideData
     return false;
   }
 
-  private static void Set<T>(Dictionary<ZDOID, Dictionary<int, T>> store, ZDOID id, int key, T value)
+  internal static bool Set<T>(Dictionary<ZDOID, Dictionary<int, T>> store, ZDO zdo, int key, T value)
   {
-    if (!store.TryGetValue(id, out var data))
+    if (!store.TryGetValue(zdo.m_uid, out var data))
     {
       data = [];
-      store[id] = data;
+      store[zdo.m_uid] = data;
     }
-    data[key] = value;
+    if (data.TryGetValue(key, out var previous))
+    {
+      if (previous is byte[] oldBytes && value is byte[] newBytes)
+      {
+        if (SameBytes(oldBytes, newBytes)) return false;
+      }
+      else if (EqualityComparer<T>.Default.Equals(previous, value))
+        return false;
+    }
+
+    data[key] = value is byte[] bytes ? (T)(object)(byte[])bytes.Clone() : value;
+    MarkSaveChunkDirty(zdo);
+    return true;
+  }
+
+  private static bool SameBytes(byte[] left, byte[] right)
+  {
+    if (left.Length != right.Length) return false;
+    for (var i = 0; i < left.Length; ++i)
+      if (left[i] != right[i]) return false;
+    return true;
+  }
+
+  private static void MarkSaveChunkDirty(ZDO zdo)
+  {
+    if (zdo.Persistent && ZDOMan.instance != null && ZNet.instance != null && ZNet.instance.IsServer())
+      ZDOMan.instance.SetDirtySector(zdo);
   }
 
   private static void Remove(ZDOID id)
@@ -373,13 +481,15 @@ public static class ServerSideData
     Bytes.Clear();
   }
 
-  private static void RemoveFromStore<T>(Dictionary<ZDOID, Dictionary<int, T>> store, ZDOID id, int key)
+  internal static bool RemoveFromStore<T>(Dictionary<ZDOID, Dictionary<int, T>> store, ZDO zdo, int key)
   {
-    if (!store.TryGetValue(id, out var data))
-      return;
-    data.Remove(key);
+    var id = zdo.m_uid;
+    if (!store.TryGetValue(id, out var data) || !data.Remove(key))
+      return false;
     if (data.Count == 0)
       store.Remove(id);
+    MarkSaveChunkDirty(zdo);
+    return true;
   }
 
   private static void RemoveFromStore<T>(Dictionary<ZDOID, BinarySearchDictionary<int, T>> store, ZDOID id, int key)
